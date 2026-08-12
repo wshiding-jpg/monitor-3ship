@@ -1,151 +1,177 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TW-OSINT Monitor (Static Edition)</title>
-    <!-- 引入 MapLibre GL (致敬 World Monitor 的 2D 渲染引擎) -->
-    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
-    <style>
-        /* 深色戰術風格 UI */
-        body { margin: 0; padding: 0; display: flex; height: 100vh; background-color: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
-        #sidebar { width: 300px; padding: 20px; background-color: #1e293b; box-shadow: 2px 0 10px rgba(0,0,0,0.8); z-index: 10; display: flex; flex-direction: column; }
-        #map { flex-grow: 1; height: 100%; }
-        h1 { font-size: 1.2rem; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top: 0; }
-        .panel-section { margin-top: 20px; }
-        .desc { font-size: 0.85rem; color: #94a3b8; margin-bottom: 15px; line-height: 1.4; }
-        .layer-btn { background-color: #334155; color: white; border: 1px solid #475569; padding: 10px 12px; margin-bottom: 10px; width: 100%; cursor: pointer; text-align: left; border-radius: 4px; transition: all 0.2s; font-size: 0.9rem; }
-        .layer-btn:hover { background-color: #475569; }
-        .layer-btn.active { background-color: #0284c7; border-color: #0369a1; border-left: 4px solid #38bdf8; }
-        .status-indicator { margin-top: auto; font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center; background: #0f172a; padding: 10px; border-radius: 4px; }
-        .dot { width: 8px; height: 8px; background-color: #22c55e; border-radius: 50%; margin-right: 10px; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
-        /* 覆寫地圖 Popup 樣式 */
-        .maplibregl-popup-content { background-color: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
-        .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #475569; }
-    </style>
-</head>
-<body>
-    <div id="sidebar">
-        <h1>TW-OSINT Monitor</h1>
-        <div class="panel-section">
-            <p class="desc">無框架前端展示 (Vanilla JS + MapLibre GL)，適用於 GitHub Pages 靜態部署。</p>
-            <button id="toggle-infra" class="layer-btn active">⚡ 關鍵基礎設施 (GeoJSON)</button>
-            <button id="toggle-alerts" class="layer-btn active">🚨 即時預警信號 (模擬)</button>
-        </div>
-        <div class="status-indicator">
-            <div class="dot"></div> 邊緣節點連線正常
-        </div>
-    </div>
-    
-    <div id="map"></div>
-
-    <script>
-        // 1. 初始化 MapLibre 地圖
-        const map = new maplibregl.Map({
-            container: 'map',
-            // 使用 Carto 的深色開源底圖，符合 OSINT 戰術風格
-            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-            center: [120.9795, 23.9740], // 台灣中心點
-            zoom: 7,
-            pitch: 45, // 設定傾角，製造微 3D 視覺感
-            bearing: -5
-        });
-
-        // 加入導航控制項 (縮放、旋轉)
-        map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-        // 2. 準備靜態情報數據 (GeoJSON 格式)
-        const infraData = {
-            "type": "FeatureCollection",
-            "features": [
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [121.5598, 25.0910]}, "properties": {"title": "北部數據節點", "type": "Cyber", "status": "Normal"}},
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.3021, 22.6273]}, "properties": {"title": "南部能源樞紐", "type": "Energy", "status": "Normal"}},
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.6736, 24.1477]}, "properties": {"title": "中部通訊基站", "type": "Comms", "status": "Normal"}}
-            ]
-        };
-
-        const alertsData = {
-            "type": "FeatureCollection",
-            "features": [
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [121.8397, 24.5021]}, "properties": {"title": "外海異常船隻軌跡", "type": "Maritime", "threat": "Medium"}},
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [119.5664, 23.5683]}, "properties": {"title": "不明干擾訊號", "type": "Signal", "threat": "High"}}
-            ]
-        };
-
-        // 3. 地圖載入後綁定圖層
-        map.on('load', () => {
-            // -- 基礎設施圖層 --
-            map.addSource('infra-source', { type: 'geojson', data: infraData });
-            map.addLayer({
-                'id': 'infra-layer',
-                'type': 'circle',
-                'source': 'infra-source',
-                'paint': {
-                    'circle-radius': 6,
-                    'circle-color': '#38bdf8',
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': '#0284c7'
-                }
-            });
-
-            // -- 預警信號圖層 --
-            map.addSource('alerts-source', { type: 'geojson', data: alertsData });
-            map.addLayer({
-                'id': 'alerts-layer',
-                'type': 'circle',
-                'source': 'alerts-source',
-                'paint': {
-                    'circle-radius': 8,
-                    'circle-color': '#ef4444',
-                    'circle-opacity': 0.8,
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': '#b91c1c'
-                }
-            });
-
-            // 4. 設定點擊互動 (Popup)
-            const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true });
-
-            const setupPopup = (layerId, isAlert) => {
-                map.on('click', layerId, (e) => {
-                    const props = e.features[0].properties;
-                    const content = isAlert 
-                        ? `<strong style="color:#ef4444">${props.title}</strong><br>類型: ${props.type}<br>威脅層級: ${props.threat}`
-                        : `<strong style="color:#38bdf8">${props.title}</strong><br>類型: ${props.type}<br>狀態: ${props.status}`;
-                    
-                    popup.setLngLat(e.lngLat).setHTML(content).addTo(map);
-                });
-
-                // 更改鼠標樣式
-                map.on('mouseenter', layerId, () => map.getCanvas().style.cursor = 'pointer');
-                map.on('mouseleave', layerId, () => map.getCanvas().style.cursor = '');
-            };
-
-            setupPopup('infra-layer', false);
-            setupPopup('alerts-layer', true);
-        });
-
-        // 5. 側邊欄按鈕邏輯
-        const setupToggle = (btnId, layerId) => {
-            document.getElementById(btnId).addEventListener('click', function() {
-                const visibility = map.getLayoutProperty(layerId, 'visibility');
-                // MapLibre 預設為 undefined (顯示)
-                if (visibility === 'none') {
-                    map.setLayoutProperty(layerId, 'visibility', 'visible');
-                    this.classList.add('active');
-                } else {
-                    map.setLayoutProperty(layerId, 'visibility', 'none');
-                    this.classList.remove('active');
-                    // 若有開啟中的 popup，將其關閉
-                    document.querySelector('.maplibregl-popup')?.remove();
-                }
-            });
-        };
-
-        setupToggle('toggle-infra', 'infra-layer');
-        setupToggle('toggle-alerts', 'alerts-layer');
-    </script>
-</body>
-</html>
+{
+  "schema": "shipping-learning-v1",
+  "run_id": "shipping-20260812-evening-2006",
+  "run_type": "evening",
+  "executed_at": "2026-08-12T20:06:12+08:00",
+  "previous_success_at": "2026-08-12T08:02:36+08:00",
+  "data_cutoff": "2026-08-12T19:55:00+08:00",
+  "status": "completed",
+  "alert_level": "red_navigation_cost_risk",
+  "data_quality_grade": "B",
+  "summary": "外資三檔同步賣超；陽明與萬海第二季獲利改善，但荷姆茲船流與VLSFO成本風險仍高。",
+  "signals": {
+    "hormuz": "Kpler 8艘、LSEG 11艘；貨櫃船與暗航未知",
+    "jebel_ali_wait_hours": null,
+    "singapore_wait_hours": 31.92,
+    "north_asia_wait_hours": 30,
+    "north_europe_wait_hours": 36.96,
+    "scfi": 3276.14,
+    "scfi_change_pct": 2.19,
+    "ccfi": 1839.61,
+    "ccfi_change_pct": -0.9,
+    "wci": 4297,
+    "wci_change_pct": 1,
+    "blank_sailings": "第33至37週取消52航次，約7%",
+    "port_skips": "unknown",
+    "rerouting": "部分蘇伊士回歸規畫面臨重新評估",
+    "fuel": "新加坡VLSFO 847.5美元/噸，日升13.5美元",
+    "war_risk_insurance": "elevated；無同口徑公開報價"
+  },
+  "stocks": {
+    "2603": {
+      "market_date": "2026-08-12",
+      "price_type": "close",
+      "open": 217,
+      "high": 217,
+      "low": 213,
+      "close_or_last": 214.5,
+      "change_pct": -1.61,
+      "volume": 9362,
+      "foreign_net": -3144,
+      "investment_trust_net": 1991,
+      "dealer_net": -175,
+      "institution_date": "2026-08-12"
+    },
+    "2609": {
+      "market_date": "2026-08-12",
+      "price_type": "close",
+      "open": 52,
+      "high": 52.1,
+      "low": 51.3,
+      "close_or_last": 51.7,
+      "change_pct": -0.58,
+      "volume": 10409,
+      "foreign_net": -1402,
+      "investment_trust_net": 32,
+      "dealer_net": -138,
+      "institution_date": "2026-08-12"
+    },
+    "2615": {
+      "market_date": "2026-08-12",
+      "price_type": "close",
+      "open": 87.7,
+      "high": 87.7,
+      "low": 86,
+      "close_or_last": 87.1,
+      "change_pct": 0,
+      "volume": 7053,
+      "foreign_net": -464,
+      "investment_trust_net": -2,
+      "dealer_net": -70,
+      "institution_date": "2026-08-12"
+    }
+  },
+  "companies": {
+    "evergreen": {
+      "short_term": "中性偏多但轉震盪",
+      "medium_term": "等待第二季財報確認",
+      "score": 68,
+      "key_driver": "投信承接、第二季財報與美國線運價"
+    },
+    "yang_ming": {
+      "short_term": "財報改善但尚待股價確認",
+      "medium_term": "中性偏多，供給增速為風險",
+      "score": 66,
+      "key_driver": "Q2 EPS 1.64元、外資賣超與供需差"
+    },
+    "wan_hai": {
+      "short_term": "高波動中性偏多",
+      "medium_term": "獲利彈性高，但新船與中東成本並存",
+      "score": 70,
+      "key_driver": "Q2 EPS 4.11元、新船與亞洲運價"
+    }
+  },
+  "hypotheses": [
+    {
+      "text": "獲利改善但市場已部分反映，航道與船燃成本使三雄分化",
+      "state": "主假說_更新",
+      "evidence": ["陽明與萬海Q2獲利改善", "外資三檔賣超", "船流低迷且VLSFO上升"],
+      "falsification": "三雄同步放量上漲、法人共同買超且運價上升快於成本"
+    },
+    {
+      "text": "強勁財報將觸發族群全面重評",
+      "state": "替代假說_待驗證",
+      "evidence": ["陽明量價改善", "萬海Q2 EPS 4.11元", "SCFI與WCI上升"],
+      "falsification": "開高走低、外資續賣或長榮財報未能支持評價"
+    },
+    {
+      "text": "新增運力在2至6週壓過局部運價改善",
+      "state": "替代假說_中期風險",
+      "evidence": ["運力增速高於需求", "萬海擴充船隊", "運價尚未完全同向"],
+      "falsification": "三項運價連升且航道受阻持續吸收運力"
+    }
+  ],
+  "forecast": {
+    "horizon": "當日/1至3日；2至6週；1至4季；1至5年",
+    "direction": "短線偏多但高波動分化；中期觀察財報、運價、船流與成本",
+    "confidence": "中等，非統計機率",
+    "reason": "財報支持基本面，但今日價量與外資未確認全面重評"
+  },
+  "lessons": [
+    {
+      "rule": "盤後財報不得回頭解釋當日收盤",
+      "change": "列為下一交易日驗證事件",
+      "reason": "財報於收盤後公布"
+    },
+    {
+      "rule": "事件方向須由收盤與法人共同確認",
+      "change": "降低單一新聞方向權重",
+      "reason": "安全風險升高但三雄未齊漲"
+    }
+  ],
+  "forecast_review": {
+    "prior_run_id": "shipping-20260812-morning-0802",
+    "result": "部分命中",
+    "error_type": "命中分化但偏多方向過度",
+    "lesson": "以收盤突破、法人延續及財報後次日反應共同驗證"
+  },
+  "weekly_evaluation": null,
+  "sources": [
+    {
+      "title": "臺灣證券交易所個股日成交資訊",
+      "url": "https://www.twse.com.tw/zh/trading/historical/stock-day.html",
+      "published_at": "2026-08-12",
+      "accessed_at": "2026-08-12T19:38:00+08:00"
+    },
+    {
+      "title": "臺灣證券交易所三大法人買賣超日報",
+      "url": "https://www.twse.com.tw/zh/trading/foreign/t86.html",
+      "published_at": "2026-08-12",
+      "accessed_at": "2026-08-12T19:39:00+08:00"
+    },
+    {
+      "title": "陽明第二季財報",
+      "url": "https://money.udn.com/money/story/5612/8936172",
+      "published_at": "2026-08-12",
+      "accessed_at": "2026-08-12T19:41:00+08:00"
+    },
+    {
+      "title": "萬海第二季財報",
+      "url": "https://money.udn.com/money/story/5612/8936132",
+      "published_at": "2026-08-12",
+      "accessed_at": "2026-08-12T19:43:00+08:00"
+    },
+    {
+      "title": "Reuters Hormuz shipping traffic falls to one-week low",
+      "url": "https://www.reuters.com/world/middle-east/hormuz-shipping-traffic-falls-one-week-low-amid-hostilities-2026-08-12/",
+      "published_at": "2026-08-12",
+      "accessed_at": "2026-08-12T19:45:00+08:00"
+    },
+    {
+      "title": "Ship & Bunker Singapore VLSFO",
+      "url": "https://shipandbunker.com/prices/apac/sea/sg-sin-singapore",
+      "published_at": "2026-08-11",
+      "accessed_at": "2026-08-12T19:47:00+08:00"
+    }
+  ]
+}
