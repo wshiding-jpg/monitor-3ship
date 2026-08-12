@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TW-OSINT Monitor (Static Edition)</title>
+    <!-- 引入 MapLibre GL (致敬 World Monitor 的 2D 渲染引擎) -->
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        /* 深色戰術風格 UI */
+        body { margin: 0; padding: 0; display: flex; height: 100vh; background-color: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
+        #sidebar { width: 300px; padding: 20px; background-color: #1e293b; box-shadow: 2px 0 10px rgba(0,0,0,0.8); z-index: 10; display: flex; flex-direction: column; }
+        #map { flex-grow: 1; height: 100%; }
+        h1 { font-size: 1.2rem; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top: 0; }
+        .panel-section { margin-top: 20px; }
+        .desc { font-size: 0.85rem; color: #94a3b8; margin-bottom: 15px; line-height: 1.4; }
+        .layer-btn { background-color: #334155; color: white; border: 1px solid #475569; padding: 10px 12px; margin-bottom: 10px; width: 100%; cursor: pointer; text-align: left; border-radius: 4px; transition: all 0.2s; font-size: 0.9rem; }
+        .layer-btn:hover { background-color: #475569; }
+        .layer-btn.active { background-color: #0284c7; border-color: #0369a1; border-left: 4px solid #38bdf8; }
+        .status-indicator { margin-top: auto; font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center; background: #0f172a; padding: 10px; border-radius: 4px; }
+        .dot { width: 8px; height: 8px; background-color: #22c55e; border-radius: 50%; margin-right: 10px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
+        /* 覆寫地圖 Popup 樣式 */
+        .maplibregl-popup-content { background-color: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
+        .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h1>TW-OSINT Monitor</h1>
+        <div class="panel-section">
+            <p class="desc">無框架前端展示 (Vanilla JS + MapLibre GL)，適用於 GitHub Pages 靜態部署。</p>
+            <button id="toggle-infra" class="layer-btn active">⚡ 關鍵基礎設施 (GeoJSON)</button>
+            <button id="toggle-alerts" class="layer-btn active">🚨 即時預警信號 (模擬)</button>
+        </div>
+        <div class="status-indicator">
+            <div class="dot"></div> 邊緣節點連線正常
+        </div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script>
+        // 1. 初始化 MapLibre 地圖
+        const map = new maplibregl.Map({
+            container: 'map',
+            // 使用 Carto 的深色開源底圖，符合 OSINT 戰術風格
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            center: [120.9795, 23.9740], // 台灣中心點
+            zoom: 7,
+            pitch: 45, // 設定傾角，製造微 3D 視覺感
+            bearing: -5
+        });
+
+        // 加入導航控制項 (縮放、旋轉)
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        // 2. 準備靜態情報數據 (GeoJSON 格式)
+        const infraData = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [121.5598, 25.0910]}, "properties": {"title": "北部數據節點", "type": "Cyber", "status": "Normal"}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.3021, 22.6273]}, "properties": {"title": "南部能源樞紐", "type": "Energy", "status": "Normal"}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.6736, 24.1477]}, "properties": {"title": "中部通訊基站", "type": "Comms", "status": "Normal"}}
+            ]
+        };
+
+        const alertsData = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [121.8397, 24.5021]}, "properties": {"title": "外海異常船隻軌跡", "type": "Maritime", "threat": "Medium"}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [119.5664, 23.5683]}, "properties": {"title": "不明干擾訊號", "type": "Signal", "threat": "High"}}
+            ]
+        };
+
+        // 3. 地圖載入後綁定圖層
+        map.on('load', () => {
+            // -- 基礎設施圖層 --
+            map.addSource('infra-source', { type: 'geojson', data: infraData });
+            map.addLayer({
+                'id': 'infra-layer',
+                'type': 'circle',
+                'source': 'infra-source',
+                'paint': {
+                    'circle-radius': 6,
+                    'circle-color': '#38bdf8',
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#0284c7'
+                }
+            });
+
+            // -- 預警信號圖層 --
+            map.addSource('alerts-source', { type: 'geojson', data: alertsData });
+            map.addLayer({
+                'id': 'alerts-layer',
+                'type': 'circle',
+                'source': 'alerts-source',
+                'paint': {
+                    'circle-radius': 8,
+                    'circle-color': '#ef4444',
+                    'circle-opacity': 0.8,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#b91c1c'
+                }
+            });
+
+            // 4. 設定點擊互動 (Popup)
+            const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true });
+
+            const setupPopup = (layerId, isAlert) => {
+                map.on('click', layerId, (e) => {
+                    const props = e.features[0].properties;
+                    const content = isAlert 
+                        ? `<strong style="color:#ef4444">${props.title}</strong><br>類型: ${props.type}<br>威脅層級: ${props.threat}`
+                        : `<strong style="color:#38bdf8">${props.title}</strong><br>類型: ${props.type}<br>狀態: ${props.status}`;
+                    
+                    popup.setLngLat(e.lngLat).setHTML(content).addTo(map);
+                });
+
+                // 更改鼠標樣式
+                map.on('mouseenter', layerId, () => map.getCanvas().style.cursor = 'pointer');
+                map.on('mouseleave', layerId, () => map.getCanvas().style.cursor = '');
+            };
+
+            setupPopup('infra-layer', false);
+            setupPopup('alerts-layer', true);
+        });
+
+        // 5. 側邊欄按鈕邏輯
+        const setupToggle = (btnId, layerId) => {
+            document.getElementById(btnId).addEventListener('click', function() {
+                const visibility = map.getLayoutProperty(layerId, 'visibility');
+                // MapLibre 預設為 undefined (顯示)
+                if (visibility === 'none') {
+                    map.setLayoutProperty(layerId, 'visibility', 'visible');
+                    this.classList.add('active');
+                } else {
+                    map.setLayoutProperty(layerId, 'visibility', 'none');
+                    this.classList.remove('active');
+                    // 若有開啟中的 popup，將其關閉
+                    document.querySelector('.maplibregl-popup')?.remove();
+                }
+            });
+        };
+
+        setupToggle('toggle-infra', 'infra-layer');
+        setupToggle('toggle-alerts', 'alerts-layer');
+    </script>
+</body>
+</html>
